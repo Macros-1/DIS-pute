@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<title>Cluster Dashboard</title>
+
+<style>
+
+body{
+font-family:Arial;
+background:#0f172a;
+color:white;
+padding:40px;
+}
+
+table{
+width:100%;
+border-collapse:collapse;
+}
+
+td,th{
+padding:10px;
+border-bottom:1px solid #333;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<h1>Distributed Cluster</h1>
+
+<h2>Nodes</h2>
+<table>
+
+<thead>
+<tr>
+<th>URL</th>
+<th>Status</th>
+<th>CPU</th>
+<th>RAM</th>
+<th>GPU</th>
+</tr>
+</thead>
+
+<tbody id="nodes"></tbody>
+
+</table>
+
+<h2>Jobs</h2>
+
+<table>
+
+<thead>
+<tr>
+<th>ID</th>
+<th>Priority</th>
+<th>GPU</th>
+</tr>
+</thead>
+
+<tbody id="jobs"></tbody>
+
+</table>
+
+<script>
+
+const MASTER="http://localhost:3000";
+
+async function loadNodes(){
+
+ const res=await fetch(`${MASTER}/nodes`);
+ const data=await res.json();
+
+ const table=document.getElementById("nodes");
+
+ table.innerHTML="";
+
+ data.forEach(n=>{
+
+ table.innerHTML+=`
+ <tr>
+ <td>${n.url}</td>
+ <td>${n.status}</td>
+ <td>${n.cpu.toFixed(1)}</td>
+ <td>${(n.memory*100).toFixed(1)}</td>
+ <td>${n.gpu}</td>
+ </tr>
+ `;
+
+ });
+
+}
+
+async function loadJobs(){
+
+ const res=await fetch(`${MASTER}/jobs`);
+ const data=await res.json();
+
+ const table=document.getElementById("jobs");
+
+ table.innerHTML="";
+
+ data.forEach(j=>{
+
+ table.innerHTML+=`
+ <tr>
+ <td>${j.id}</td>
+ <td>${j.priority}</td>
+ <td>${j.gpu}</td>
+ </tr>
+ `;
+
+ });
+
+}
+
+setInterval(()=>{
+
+ loadNodes();
+ loadJobs();
+
+},2000);
+
+</script>
+
+</body>
+
+</html>
