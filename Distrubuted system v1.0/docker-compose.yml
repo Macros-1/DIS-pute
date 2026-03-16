@@ -1,0 +1,21 @@
+version: "3"
+
+services:
+
+  master:
+    build: .
+    container_name: master
+    ports:
+      - "8000:8000"
+
+  agent1:
+    build: .
+    command: python agent/agent.py
+    depends_on:
+      - master
+
+  agent2:
+    build: .
+    command: python agent/agent.py
+    depends_on:
+      - master
