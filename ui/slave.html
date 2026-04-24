@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Nexus Slave</title>
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #0a0a0c; color: white; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: #16161e; padding: 40px; border-radius: 24px; text-align: center; width: 380px; border: 1px solid #272737; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { margin-top: 0; letter-spacing: 2px; color: #f3f4f6; }
+        input { width: 100%; padding: 15px; margin: 20px 0; background: #000; border: 1px solid #3b82f6; color: #3b82f6; border-radius: 12px; box-sizing: border-box; text-align: center; font-family: monospace; font-size: 0.9rem; outline: none; transition: 0.3s; }
+        input:focus { box-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
+        .btn { width: 100%; padding: 18px; background: #3b82f6; color: white; border: none; border-radius: 12px; font-weight: bold; cursor: pointer; transition: 0.3s; text-transform: uppercase; letter-spacing: 1px; }
+        .btn:hover { background: #2563eb; transform: translateY(-2px); }
+        .btn:active { transform: translateY(0); }
+        #status { font-size: 0.85rem; margin-bottom: 15px; color: #94a3b8; font-family: monospace; min-height: 1.2em; }
+        .sync-icon { display: inline-block; animation: spin 2s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>SLAVE PORT</h2>
+        <div id="status">READY FOR CLUSTER LINK</div>
+        
+        <div id="authBox">
+            <input type="text" id="tk" placeholder="PASTE CLUSTER TOKEN" autocomplete="off">
+            <button class="btn" onclick="start()">Establish Link</button>
+        </div>
+
+        <div id="metrics" style="display:none; margin-top:20px;">
+            <div style="color:#2dd4bf; font-weight: bold; font-size: 1.1rem;">
+                <span class="sync-icon">🔄</span> NODE ACTIVE & SYNCED
+            </div>
+            <p style="color: #64748b; font-size: 0.75rem; margin-top: 10px;">Streaming hardware metrics to Master...</p>
+        </div>
+    </div>
+
+    <script>
+        async function start() {
+            const status = document.getElementById('status');
+            const tokenInput = document.getElementById('tk');
+            const authBox = document.getElementById('authBox');
+            const metrics = document.getElementById('metrics');
+
+            if (!tokenInput.value) {
+                status.innerText = "⚠️ PLEASE PASTE A TOKEN";
+                status.style.color = "#fbbf24";
+                return;
+            }
+
+            status.innerText = "🔍 LOCATING LOCAL AGENT (PORT 4000)...";
+            status.style.color = "#94a3b8";
+            
+            try {
+                // CRITICAL: Explicitly call the local agent on port 4000
+                const res = await fetch('https://localhost:4000/connect-master', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: tokenInput.value })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    authBox.style.display = 'none';
+                    metrics.style.display = 'block';
+                    status.innerText = "✅ LINK ESTABLISHED WITH MASTER";
+                    status.style.color = "#2dd4bf";
+                } else {
+                    status.innerText = "❌ FAILED: " + data.message;
+                    status.style.color = "#f87171";
+                    if (data.message === "DOCKER_OFFLINE") {
+                        alert("Docker Engine not detected! Please start Docker Desktop and try again.");
+                    }
+                }
+            } catch (e) {
+                status.innerText = "❌ AGENT UNREACHABLE";
+                status.style.color = "#f87171";
+                console.error("Connection Error:", e);
+                alert("The Slave Agent backend (port 4000) is not running on this machine.");
+            }
+        }
+    </script>
+</body>
+</html>

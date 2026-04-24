@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Nexus Cluster</title>
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #0a0a0c; color: white; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: #16161e; padding: 50px; border-radius: 24px; text-align: center; width: 400px; border: 1px solid #272737; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h1 { background: linear-gradient(to right, #3b82f6, #2dd4bf); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; font-size: 3.5rem; margin: 0; letter-spacing: 4px; }
+        .btn { display: block; width: 100%; padding: 20px; margin: 15px 0; border: none; border-radius: 12px; font-weight: bold; cursor: not-allowed; opacity: 0.2; pointer-events: none; transition: all 0.3s ease; text-transform: uppercase; font-size: 0.9rem; letter-spacing: 1px; }
+        .active { opacity: 1 !important; cursor: pointer !important; pointer-events: auto !important; transform: translateY(-2px); }
+        .active:hover { filter: brightness(1.2); box-shadow: 0 5px 15px rgba(59, 130, 246, 0.2); }
+        .btn-master { background: #3b82f6; color: white; }
+        .btn-slave { border: 2px solid #2dd4bf; color: #2dd4bf; background: transparent; }
+        #status { margin-bottom: 20px; font-family: monospace; font-size: 0.85rem; padding: 12px; border-radius: 8px; transition: 0.3s; background: rgba(255,255,255,0.05); }
+        .retry-btn { background: none; border: 1px solid #334155; color: #64748b; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 10px; margin-top: 10px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>NEXUS</h1>
+        <p style="color: #64748b; font-size: 0.75rem; margin-top: -5px; margin-bottom: 25px;">DISTRIBUTED COMPUTING V2.3</p>
+        
+        <div id="status">🔄 INITIALIZING SYSTEM...</div>
+        
+        <button id="m" class="btn btn-master" onclick="location.href='/start/master'">Master Mode</button>
+        <button id="s" class="btn btn-slave" onclick="location.href='/start/slave'">Slave Mode</button>
+        
+        <button id="retry" class="retry-btn" onclick="check()">RETRY CONNECTION</button>
+    </div>
+
+    <script>
+        async function check() {
+            const s = document.getElementById('status');
+            const retry = document.getElementById('retry');
+            const mBtn = document.getElementById('m');
+            const sBtn = document.getElementById('s');
+
+            s.innerText = "🔄 CHECKING DOCKER ENGINE...";
+            s.style.color = "white";
+            s.style.background = "rgba(255,255,255,0.05)";
+            retry.style.display = "none";
+
+            // Create a timeout so it doesn't hang forever
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000); // 4 second limit
+
+            try {
+                const res = await fetch('/docker-check', { signal: controller.signal });
+                const data = await res.json();
+                clearTimeout(timeoutId);
+
+                if (data.docker) {
+                    s.innerText = "✅ DOCKER ENGINE DETECTED"; 
+                    s.style.background = "rgba(45,212,191,0.1)"; 
+                    s.style.color = "#2dd4bf";
+                    mBtn.classList.add('active');
+                    sBtn.classList.add('active');
+                } else {
+                    throw new Error("OFFLINE");
+                }
+            } catch (err) {
+                clearTimeout(timeoutId);
+                mBtn.classList.remove('active');
+                sBtn.classList.remove('active');
+                
+                if (err.name === 'AbortError') {
+                    s.innerText = "❌ CHECK TIMED OUT";
+                } else {
+                    s.innerText = "❌ DOCKER OFFLINE - START DESKTOP";
+                }
+                
+                s.style.background = "rgba(248,113,113,0.1)"; 
+                s.style.color = "#f87171";
+                retry.style.display = "inline-block";
+            }
+        }
+
+        // Run check on load
+        check();
+    </script>
+</body>
+</html>

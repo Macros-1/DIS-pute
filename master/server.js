@@ -1,185 +1,135 @@
 const express = require("express");
-const axios = require("axios");
 const cors = require("cors");
+const path = require("path");
+const http = require("http");
+const { Server } = require("socket.io");
+const localtunnel = require("localtunnel");
+const Docker = require("dockerode");
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
+
 app.use(express.json());
 app.use(cors());
 
-const PORT = 3000;
+// --- FOLDER PATHING ---
+const UI_PATH = path.join(__dirname, "..", "ui");
+app.use(express.static(UI_PATH));
 
-const CLUSTER_KEY = "cluster-secret";
+// Docker configuration with platform check
+const isWin = process.platform === "win32";
+const docker = new Docker(isWin ? { socketPath: '//./pipe/docker_engine' } : { socketPath: '/var/run/docker.sock' });
+
+// --- UI ROUTES ---
+app.get('/', (req, res) => res.sendFile(path.join(UI_PATH, 'index.html')));
+app.get('/start/master', (req, res) => res.sendFile(path.join(UI_PATH, 'master.html')));
+app.get('/start/slave', (req, res) => res.sendFile(path.join(UI_PATH, 'slave.html')));
+
+// --- DOCKER CHECK ROUTE ---
+app.get('/docker-check', async (req, res) => {
+    try {
+        await Promise.race([
+            docker.ping(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+        ]);
+        res.json({ docker: true });
+    } catch (e) {
+        res.json({ docker: false });
+    }
+});
 
 let nodes = [];
-let jobs = [];
-let jobLogs = {};
+let publicUrl = "";
+const CLUSTER_KEY = "nexus_v5_pro";
 
-/* ---------------------------
-NODE REGISTRATION
-----------------------------*/
-
-app.post("/register",(req,res)=>{
-
-    if(req.body.key !== CLUSTER_KEY){
-        return res.status(403).json({error:"Invalid key"});
+// --- TUNNEL SETUP ---
+async function startTunnel(port) {
+    try {
+        const tunnel = await localtunnel({ 
+            port: port, 
+            subdomain: "nexus-master-" + Math.floor(Math.random() * 1000) 
+        });
+        publicUrl = tunnel.url;
+        console.log(`\n🌍 EXTERNAL ACCESS ENABLED`);
+        console.log(`🔗 PUBLIC URL: ${publicUrl}`);
+        console.log(`------------------------------------\n`);
+        
+        tunnel.on('close', () => { 
+            console.log("⚠️ Tunnel closed. Re-opening...");
+            startTunnel(port); // Basic auto-restart for tunnel
+        });
+    } catch (err) {
+        console.error("Tunnel error:", err);
     }
-
-    const node={
-        id:Date.now(),
-        url:req.body.url,
-        status:"idle",
-        cpu:0,
-        memory:0,
-        gpu:false,
-        lastHeartbeat:Date.now()
-    };
-
-    nodes.push(node);
-
-    console.log("Node joined:",node.url);
-
-    res.json({message:"registered"});
-});
-
-/* ---------------------------
-METRICS
-----------------------------*/
-
-app.post("/metrics",(req,res)=>{
-
-    const node = nodes.find(n=>n.url===req.body.url);
-
-    if(node){
-
-        node.cpu=req.body.cpu;
-        node.memory=req.body.memory;
-        node.gpu=req.body.gpu;
-        node.lastHeartbeat=Date.now();
-
-    }
-
-    res.json({status:"ok"});
-});
-
-/* ---------------------------
-JOB SUBMIT
-----------------------------*/
-
-app.post("/submit",(req,res)=>{
-
-    const job={
-        id:Date.now(),
-        image:req.body.image,
-        command:req.body.command,
-        gpu:req.body.gpu||false,
-        priority:req.body.priority||"normal",
-        status:"queued"
-    };
-
-    jobs.push(job);
-
-    console.log("Job added:",job.id);
-
-    res.json({job});
-});
-
-/* ---------------------------
-JOB REQUEST (PULL MODEL)
-----------------------------*/
-
-app.post("/request-job",(req,res)=>{
-
-    const node = nodes.find(n=>n.url===req.body.url);
-
-    if(!node) return res.json({job:null});
-
-    if(jobs.length===0) return res.json({job:null});
-
-    jobs.sort((a,b)=>{
-        const p={high:3,normal:2,low:1};
-        return p[b.priority]-p[a.priority];
-    });
-
-    const job = jobs.shift();
-
-    if(job.gpu && !node.gpu){
-        jobs.push(job);
-        return res.json({job:null});
-    }
-
-    node.status="busy";
-
-    res.json({job});
-});
-
-/* ---------------------------
-JOB LOGS
-----------------------------*/
-
-app.post("/logs",(req,res)=>{
-
-    const {jobId,log}=req.body;
-
-    if(!jobLogs[jobId]) jobLogs[jobId]=[];
-
-    jobLogs[jobId].push(log);
-
-    res.json({status:"stored"});
-});
-
-/* ---------------------------
-DASHBOARD APIs
-----------------------------*/
-
-app.get("/nodes",(req,res)=>res.json(nodes));
-
-app.get("/jobs",(req,res)=>res.json(jobs));
-
-app.get("/logs/:id",(req,res)=>{
-
-    res.json(jobLogs[req.params.id]||[]);
-
-});
-
-app.get("/cluster",(req,res)=>{
-
-    res.json({
-        nodes:nodes.length,
-        queuedJobs:jobs.length
-    });
-
-});
-
-/* ---------------------------
-NODE HEALTH CHECK
-----------------------------*/
-
-function checkNodes(){
-
-    const now = Date.now();
-
-    nodes.forEach(node=>{
-
-        if(now-node.lastHeartbeat>15000){
-
-            node.status="dead";
-
-            console.log("Node offline:",node.url);
-
-        }
-
-    });
-
 }
 
-setInterval(checkNodes,5000);
+// --- API ENDPOINTS ---
+app.get("/generate-token", (req, res) => {
+    const target = publicUrl || `http://localhost:${PORT}`;
+    const token = Buffer.from(`${target}:${CLUSTER_KEY}`).toString('base64');
+    res.json({ token, publicUrl: target });
+});
 
-/* ---------------------------
-START
-----------------------------*/
+app.post("/register", (req, res) => {
+    const { key, id, name, dockerStatus } = req.body;
 
-app.listen(PORT,()=>{
+    if (key !== CLUSTER_KEY) {
+        console.log(`❌ Unauthorized connection attempt from ${name}`);
+        return res.status(403).json({ success: false, message: "Invalid Cluster Key" });
+    }
 
-    console.log("Master running on port",PORT);
+    const node = { 
+        id,
+        name,
+        dockerStatus,
+        status: "free", 
+        lastSeen: Date.now(),
+        cpu: "0", 
+        mem: "0%", 
+        gpu: "N/A" 
+    };
 
+    // Replace node if ID exists, otherwise push new
+    const index = nodes.findIndex(n => n.id === id);
+    if (index !== -1) {
+        nodes[index] = node;
+    } else {
+        nodes.push(node);
+    }
+    
+    io.emit('node_list_updated', nodes);
+    res.json({ success: true, message: "Registered successfully" });
+});
+
+app.post("/metrics", (req, res) => {
+    const node = nodes.find(n => n.id === req.body.id);
+    if (node) {
+        // Update data and refresh lastSeen timestamp
+        Object.assign(node, req.body, { lastSeen: Date.now() });
+        io.emit('node_list_updated', nodes);
+    }
+    res.send("ok");
+});
+
+// --- SOCKET CONNECTION ---
+io.on('connection', (socket) => {
+    socket.emit('node_list_updated', nodes);
+});
+
+// --- NODE CLEANUP ---
+setInterval(() => {
+    const now = Date.now();
+    const activeNodes = nodes.filter(n => (now - n.lastSeen) < 10000);
+    
+    if (activeNodes.length !== nodes.length) {
+        nodes = activeNodes;
+        io.emit('node_list_updated', nodes);
+    }
+}, 5000);
+
+const PORT = 3000;
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Master running at http://localhost:${PORT}`);
+    startTunnel(PORT);
 });

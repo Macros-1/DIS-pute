@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Nexus Master</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        :root { --blue: #3b82f6; --green: #2dd4bf; --bg: #0f172a; --panel: #1e293b; }
+        body { background: var(--bg); color: #f1f5f9; font-family: 'Inter', sans-serif; padding: 40px; margin: 0; }
+        .grid { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 25px; }
+        .panel { background: var(--panel); padding: 25px; border-radius: 12px; border: 1px solid #334155; }
+        .token-box { display: none; background: #000; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px dashed var(--blue); align-items: center; justify-content: space-between; }
+        .terminal { background: #000; height: 400px; overflow-y: auto; border-radius: 8px; padding: 15px; font-family: 'Fira Code', monospace; font-size: 12px; margin-top: 15px; border: 1px solid #334155; }
+        .summary { color: var(--green); background: rgba(45,212,191,0.1); border-left: 3px solid var(--green); padding-left: 10px; font-weight: bold; margin-bottom: 5px; }
+        .output-line { color: #94a3b8; padding: 2px 0; border-bottom: 1px solid #1e293b; }
+        .btn { background: var(--blue); color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { font-size: 10px; color: #64748b; text-transform: uppercase; padding-bottom: 10px; }
+        td { padding: 12px 5px; border-bottom: 1px solid #334155; font-size: 13px; }
+        .status-free { color: var(--green); }
+        .status-busy { color: #fbbf24; }
+        /* Progress bar for CPU/RAM */
+        .stat-bar { height: 6px; background: #334155; border-radius: 3px; overflow: hidden; width: 60px; display: inline-block; vertical-align: middle; margin-right: 5px; }
+        .stat-fill { height: 100%; background: var(--blue); transition: width 0.3s; }
+    </style>
+</head>
+<body>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:30px;">
+        <div>
+            <h1 style="margin:0;">NEXUS MASTER</h1>
+            <small id="tunnelStatus" style="color:#64748b;">Connecting to tunnel...</small>
+        </div>
+        <button class="btn" onclick="genTk()">GENERATE TOKEN</button>
+    </div>
+
+    <div id="tkB" class="token-box">
+        <span id="tkC" style="font-family:monospace; color:var(--blue); font-size: 12px; word-break: break-all; padding-right: 20px;"></span>
+        <button onclick="copyTk()" style="background:transparent; color:var(--blue); border:1px solid var(--blue); cursor:pointer; padding:5px 10px; border-radius:4px;">COPY</button>
+    </div>
+
+    <div class="grid">
+        <div class="panel">
+            <h3>CLUSTER NODES</h3>
+            <table>
+                <thead><tr><th>Node</th><th>Status</th><th>CPU</th><th>RAM</th><th>GPU</th></tr></thead>
+                <tbody id="nodeList"></tbody>
+            </table>
+        </div>
+        <div class="panel">
+            <h3>DEPLOY JOB</h3>
+            <form id="jobF">
+                <label style="font-size:12px; color:#64748b;">Select Script:</label>
+                <input type="file" id="fi" style="display:block; margin: 10px 0 20px 0;">
+                
+                <label style="font-size:12px; color:#64748b;">Runtime Environment:</label>
+                <select id="env" style="width:100%; padding:10px; background:#0f172a; color:white; border:1px solid #334155; margin-bottom:15px; border-radius: 6px;">
+                    <option value="python">Python 3.9 (Slim)</option>
+                    <option value="node">Node.js 18 (Alpine)</option>
+                </select>
+                <button type="submit" id="execBtn" class="btn" style="width:100%;">EXECUTE ON CLUSTER</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="panel" style="margin-top:25px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3>INTELLIGENCE LOGS (LIVE)</h3>
+            <button onclick="document.getElementById('logs').innerHTML=''" style="background:none; border:none; color:#64748b; cursor:pointer; font-size:12px;">Clear Console</button>
+        </div>
+        <div class="terminal" id="logs"></div>
+    </div>
+
+    <script>
+        // Use relative path for Socket.io so it works via Tunneling or Localhost
+        const socket = io(); 
+        
+        // --- 1. Token Generation ---
+        async function genTk() {
+            const r = await fetch(`/generate-token`);
+            const d = await r.json();
+            document.getElementById('tkC').innerText = d.token;
+            document.getElementById('tkB').style.display = 'flex';
+            document.getElementById('tunnelStatus').innerText = `Tunnel Active: ${d.publicUrl}`;
+        }
+
+        function copyTk() { 
+            navigator.clipboard.writeText(document.getElementById('tkC').innerText); 
+            alert("Token Copied to Clipboard"); 
+        }
+
+        // --- 2. Real-Time Node Updates (Socket) ---
+        socket.on('node_list_updated', (nodes) => {
+            const list = document.getElementById('nodeList');
+            list.innerHTML = nodes.map(n => `
+                <tr>
+                    <td><b>${n.name}</b><br><small style="color:#64748b;">${n.hostname || ''}</small></td>
+                    <td class="status-${n.status}">${n.status.toUpperCase()}</td>
+                    <td>
+                        <div class="stat-bar"><div class="stat-fill" style="width:${n.cpu}%"></div></div>
+                        ${parseFloat(n.cpu).toFixed(1)}%
+                    </td>
+                    <td>${n.mem}</td>
+                    <td style="font-size:10px;">${n.gpu}</td>
+                </tr>
+            `).join('');
+        });
+
+        // --- 3. Live Log Streaming (Socket) ---
+        socket.on('ui_log_update', (data) => {
+            const logContainer = document.getElementById('logs');
+            const logEntry = document.createElement('div');
+            
+            // Highlight summaries vs raw output
+            if (data.type === 'summary') {
+                logEntry.className = 'summary';
+                logEntry.innerHTML = `[${new Date().toLocaleTimeString()}] ${data.text}`;
+            } else {
+                logEntry.className = 'output-line';
+                logEntry.innerText = `[${data.jobId}] > ${data.text}`;
+            }
+            
+            logContainer.appendChild(logEntry);
+            // Auto-scroll to bottom
+            logContainer.scrollTop = logContainer.scrollHeight;
+        });
+
+        // --- 4. Job Deployment ---
+        document.getElementById('jobF').onsubmit = async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('execBtn');
+            btn.innerText = "UPLOADING...";
+            btn.disabled = true;
+
+            const fd = new FormData(); 
+            fd.append('file', document.getElementById('fi').files[0]); 
+            fd.append('type', document.getElementById('env').value);
+            
+            try {
+                await fetch(`/assign-job`, { method: 'POST', body: fd });
+                btn.innerText = "EXECUTED";
+                setTimeout(() => { btn.innerText = "EXECUTE ON CLUSTER"; btn.disabled = false; }, 2000);
+            } catch (err) {
+                alert("Upload failed. Check Master connection.");
+                btn.disabled = false;
+            }
+        };
+    </script>
+</body>
+</html>
